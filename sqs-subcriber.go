@@ -69,7 +69,10 @@ func NewSQSSubscriber(queueName string, workerCount int) (*SQSSubscriber, error)
 		return nil, fmt.Errorf("AWS_ACCOUNT_ID environment variable is required")
 	}
 
-	result, err := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
+	urlCtx, urlCancel := context.WithTimeout(ctx, sqsCallTimeout)
+	defer urlCancel()
+
+	result, err := client.GetQueueUrl(urlCtx, &sqs.GetQueueUrlInput{
 		QueueOwnerAWSAccountId: &accountID,
 		QueueName:              &queueName,
 	})
@@ -168,7 +171,11 @@ func (s *SQSSubscriber) startWorker() {
 }
 
 func (s *SQSSubscriber) receiveMessages() (*sqs.ReceiveMessageOutput, error) {
-	return s.client.ReceiveMessage(s.ctx, &sqs.ReceiveMessageInput{
+	// Deadline per call, derived from s.ctx so Stop() still cancels it.
+	ctx, cancel := context.WithTimeout(s.ctx, sqsCallTimeout)
+	defer cancel()
+
+	return s.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		AttributeNames: []types.QueueAttributeName{
 			types.QueueAttributeNameAll,
 		},
@@ -197,10 +204,12 @@ func (s *SQSSubscriber) processMessage(msg *types.Message) {
 	// If message was processed successfully, delete it
 	if processError == nil {
 		if msg.ReceiptHandle != nil {
-			_, err := s.client.DeleteMessage(s.ctx, &sqs.DeleteMessageInput{
+			ctx, cancel := context.WithTimeout(s.ctx, sqsCallTimeout)
+			_, err := s.client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 				QueueUrl:      s.queueURL,
 				ReceiptHandle: msg.ReceiptHandle,
 			})
+			cancel()
 			if err != nil {
 				log.Printf("Error deleting message: %v", err)
 			}

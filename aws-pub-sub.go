@@ -3,6 +3,7 @@ package pkgcommon
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sns"
@@ -67,6 +68,12 @@ func PublishMessageToSNSByARN(topicArn string, message string, msgData map[strin
 	return nil
 }
 
+// sqsCallTimeout bounds every SQS call so a dead TCP connection (e.g. to a deleted VPC
+// endpoint) returns an error instead of blocking forever. Must exceed the longest
+// WaitTimeSeconds (20). Applied per call, not on the shared session, because the same
+// session also carries long S3 uploads.
+var sqsCallTimeout = 30 * time.Second
+
 // ReceiveMessages to retrieve message from  AWS sqs
 func ReceiveMessages(svc *sqs.SQS, queueURL string) ([]*sqs.Message, error) {
 
@@ -83,8 +90,11 @@ func ReceiveMessages(svc *sqs.SQS, queueURL string) ([]*sqs.Message, error) {
 		VisibilityTimeout:   aws.Int64(20), // max 20
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), sqsCallTimeout)
+	defer cancel()
+
 	receiveMessageOutput, err :=
-		svc.ReceiveMessage(receiveMessagesInput)
+		svc.ReceiveMessageWithContext(ctx, receiveMessagesInput)
 
 	if err != nil {
 		return nil, err
@@ -103,7 +113,10 @@ func DeleteMessage(svc *sqs.SQS, queueURL string, handle *string) error {
 		QueueUrl:      aws.String(queueURL),
 		ReceiptHandle: handle,
 	}
-	_, err := svc.DeleteMessage(delInput)
+	ctx, cancel := context.WithTimeout(context.Background(), sqsCallTimeout)
+	defer cancel()
+
+	_, err := svc.DeleteMessageWithContext(ctx, delInput)
 
 	if err != nil {
 		return err
