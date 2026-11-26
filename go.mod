@@ -1,4 +1,4 @@
-module github.com/shahbazkrispx/pkgcommon
+module github.com/Krisp-Inc/pkgcommon
 
 go 1.22
 
